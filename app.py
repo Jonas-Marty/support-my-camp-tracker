@@ -225,7 +225,7 @@ HTML_TEMPLATE = """
         <header>
             <h1>🎫 Migros SupportMyCamp</h1>
             <div class="header-info">
-                <div>Voucher Tracker 2025</div>
+                <div>Migros Vereinsbon Tracker 2026</div>
                 <div id="lastUpdate">Wird geladen...</div>
             </div>
             <div class="voucher-worth" id="voucherWorth">Wird geladen...</div>
@@ -236,15 +236,15 @@ HTML_TEMPLATE = """
                 type="text" 
                 id="searchInput" 
                 class="search-input" 
-                placeholder="🔍 Verein suchen..."
+                placeholder="🔍 Verein suchen..."=
                 autocomplete="off"
             >
         </div>
         
         <div class="stats-summary" id="statsSummary">
-            <div><strong>Clubs:</strong> <span id="totalClubs">-</span></div>
-            <div><strong>Vouchers:</strong> <span id="totalVouchers">-</span></div>
-            <div><strong>Prize Pool:</strong> CHF 3'000'000</div>
+            <div><strong>Vereine:</strong> <span id="totalClubs">-</span></div>
+            <div><strong>Total eingelöste Vereinsbons:</strong> <span id="totalVouchers">-</span></div>
+            <div><strong>Fördertopf:</strong> CHF 3'000'000</div>
         </div>
         
         <div id="clubsContainer" class="loading">
@@ -267,9 +267,14 @@ HTML_TEMPLATE = """
             return `CHF ${formatNumber(amount.toFixed(2))}`;
         }
         
-        // Format date
+        // Format date (converts UTC to local timezone)
         function formatDate(isoString) {
-            const date = new Date(isoString);
+            // Ensure the timestamp is treated as UTC by adding 'Z' if not present
+            let utcString = isoString;
+            if (!isoString.endsWith('Z') && !isoString.includes('+') && !isoString.includes('Z')) {
+                utcString = isoString + 'Z';
+            }
+            const date = new Date(utcString);
             return date.toLocaleString('de-CH', {
                 day: '2-digit',
                 month: '2-digit',
@@ -293,7 +298,7 @@ HTML_TEMPLATE = """
                     <div class="club-name">${escapeHtml(club.name)}</div>
                     <div class="club-stats">
                         <div class="stat-item">
-                            <span class="stat-label">Vouchers</span>
+                            <span class="stat-label">Bons</span>
                             <span class="stat-value highlight">${formatNumber(club.voucherCount)}</span>
                         </div>
                         <div class="stat-item">
@@ -373,7 +378,7 @@ HTML_TEMPLATE = """
                 // Update header info
                 const metadata = data.metadata || {};
                 document.getElementById('voucherWorth').textContent = 
-                    `1 Voucher = ${formatCurrency(metadata.voucherWorth || 0)}`;
+                    `1 Vereinsbon = ${formatCurrency(metadata.voucherWorth || 0)}`;
                 document.getElementById('lastUpdate').textContent = 
                     `Stand: ${formatDate(metadata.timestamp)}`;
                 

@@ -21,8 +21,8 @@ else
 fi
 
 # Set up cron job
-echo "Setting up cron job for automatic updates every 2 hours..."
-echo "0 */2 * * * cd /app && /usr/local/bin/python -u /app/scraper.py >> /app/logs/cron.log 2>&1" | crontab -
+echo "Setting up cron job for automatic updates every 1 hour..."
+echo "0 */1 * * * cd /app && /usr/local/bin/python -u /app/scraper.py >> /app/logs/cron.log 2>&1" | crontab -
 
 # Start cron daemon
 echo "Starting cron daemon..."
