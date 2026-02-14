@@ -30,3 +30,6 @@ data/.scraper.lock
 # OS
 .DS_Store
 Thumbs.db
+
+# Visual Studio
+.vs/

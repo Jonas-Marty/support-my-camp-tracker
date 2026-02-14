@@ -7,9 +7,10 @@ Flask application serving a mobile-optimized website for viewing club voucher st
 
 import json
 import logging
+import csv
 from pathlib import Path
 
-from flask import Flask, render_template_string, send_from_directory
+from flask import Flask, render_template_string, send_from_directory, jsonify
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -17,6 +18,9 @@ logger = logging.getLogger(__name__)
 
 DATA_DIR = Path("data")
 LATEST_FILE = DATA_DIR / "latest.json"
+PREDICTIONS_DIR = DATA_DIR / "predictions"
+PREDICTIONS_FILE = PREDICTIONS_DIR / "predictions_latest.csv"
+WORTH_TIMELINE_FILE = PREDICTIONS_DIR / "voucher_worth_timeline_latest.csv"
 
 # HTML Template with inline CSS and JavaScript
 HTML_TEMPLATE = """
@@ -26,6 +30,7 @@ HTML_TEMPLATE = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Migros SupportMyCamp - Voucher Tracker</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -236,9 +241,28 @@ HTML_TEMPLATE = """
                 type="text" 
                 id="searchInput" 
                 class="search-input" 
-                placeholder="🔍 Verein suchen..."=
+                placeholder="🔍 Verein suchen..."
                 autocomplete="off"
             >
+        </div>
+        
+        <!-- Charts Section -->
+        <div class="charts-section" style="background: white; padding: 20px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);">
+            <h2 style="margin-bottom: 20px; font-size: 1.3em;">📈 Bon-Wert & Bon-Anzahl Prognose</h2>
+            <div style="height: 350px; position: relative;">
+                <canvas id="worthChart"></canvas>
+            </div>
+        </div>
+
+        <div id="clubChartSection" style="display: none; background: white; padding: 20px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);">
+            <h2 id="clubChartTitle" style="margin-bottom: 20px; font-size: 1.3em;"></h2>
+            <div style="height: 350px; position: relative;">
+                <canvas id="clubChart"></canvas>
+            </div>
+            <button onclick="document.getElementById('clubChartSection').style.display='none'" 
+                    style="margin-top: 15px; padding: 10px 20px; background: #ff6b00; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 1em;">
+                Schliessen
+            </button>
         </div>
         
         <div class="stats-summary" id="statsSummary">
@@ -256,6 +280,8 @@ HTML_TEMPLATE = """
         let allClubs = [];
         let searchTimeout = null;
         const DEBOUNCE_DELAY = 300; // ms
+        let worthChart = null;
+        let clubChart = null;
         
         // Format number with thousands separator
         function formatNumber(num) {
@@ -284,6 +310,227 @@ HTML_TEMPLATE = """
             });
         }
         
+        // Load voucher worth timeline chart
+        async function loadWorthTimeline() {
+            try {
+                const response = await fetch('/api/predictions/worth-timeline');
+                if (!response.ok) {
+                    console.log('Predictions not yet available');
+                    return;
+                }
+                
+                const data = await response.json();
+                const ctx = document.getElementById('worthChart').getContext('2d');
+                
+                if (worthChart) {
+                    worthChart.destroy();
+                }
+                
+                worthChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: data.map(d => new Date(d.timestamp).toLocaleDateString('de-CH', {day: '2-digit', month: '2-digit'})),
+                        datasets: [
+                            {
+                                label: 'Bon-Wert (CHF)',
+                                data: data.map(d => d.worth),
+                                borderColor: '#ff6b00',
+                                backgroundColor: 'rgba(255, 107, 0, 0.1)',
+                                yAxisID: 'y',
+                                tension: 0.4,
+                                fill: true,
+                                pointRadius: 2,
+                                pointHoverRadius: 6
+                            },
+                            {
+                                label: 'Prognostizierte Bons (Total)',
+                                data: data.map(d => d.vouchers),
+                                borderColor: '#0066cc',
+                                backgroundColor: 'rgba(0, 102, 204, 0.1)',
+                                yAxisID: 'y1',
+                                tension: 0.4,
+                                fill: true,
+                                pointRadius: 2,
+                                pointHoverRadius: 6
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: {
+                            mode: 'index',
+                            intersect: false,
+                        },
+                        plugins: {
+                            legend: {
+                                display: true,
+                                position: 'top'
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        if (context.datasetIndex === 0) {
+                                            return context.dataset.label + ': CHF ' + context.parsed.y.toFixed(2);
+                                        } else {
+                                            return context.dataset.label + ': ' + context.parsed.y.toLocaleString('de-CH');
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        scales: {
+                            y: {
+                                type: 'linear',
+                                display: true,
+                                position: 'left',
+                                title: {
+                                    display: true,
+                                    text: 'Bon-Wert (CHF)'
+                                },
+                                beginAtZero: false,
+                                ticks: {
+                                    callback: function(value) {
+                                        return 'CHF ' + value.toFixed(2);
+                                    }
+                                }
+                            },
+                            y1: {
+                                type: 'linear',
+                                display: true,
+                                position: 'right',
+                                title: {
+                                    display: true,
+                                    text: 'Total Bons'
+                                },
+                                grid: {
+                                    drawOnChartArea: false,
+                                },
+                                ticks: {
+                                    callback: function(value) {
+                                        return value.toLocaleString('de-CH');
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            } catch (error) {
+                console.error('Error loading worth timeline:', error);
+            }
+        }
+
+        // Load club predictions chart
+        async function loadClubPredictions(clubId, clubName) {
+            try {
+                const response = await fetch(`/api/predictions/club/${clubId}`);
+                if (!response.ok) {
+                    console.log('Club predictions not available');
+                    return;
+                }
+                
+                const data = await response.json();
+                
+                document.getElementById('clubChartTitle').textContent = `📊 Prognose für ${clubName}`;
+                document.getElementById('clubChartSection').style.display = 'block';
+                
+                const ctx = document.getElementById('clubChart').getContext('2d');
+                
+                if (clubChart) {
+                    clubChart.destroy();
+                }
+                
+                clubChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: data.snapshots.map(s => new Date(s.date).toLocaleDateString('de-CH', {day: '2-digit', month: '2-digit'})),
+                        datasets: [
+                            {
+                                label: 'Prognostizierte Auszahlung (CHF)',
+                                data: data.snapshots.map(s => s.payout),
+                                borderColor: '#ff6b00',
+                                backgroundColor: 'rgba(255, 107, 0, 0.1)',
+                                yAxisID: 'y',
+                                tension: 0.4,
+                                fill: true,
+                                pointRadius: 3,
+                                pointHoverRadius: 7
+                            },
+                            {
+                                label: 'Prognostizierte Bons',
+                                data: data.snapshots.map(s => s.vouchers),
+                                borderColor: '#0066cc',
+                                backgroundColor: 'rgba(0, 102, 204, 0.1)',
+                                yAxisID: 'y1',
+                                tension: 0.4,
+                                fill: true,
+                                pointRadius: 3,
+                                pointHoverRadius: 7
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: {
+                            mode: 'index',
+                            intersect: false,
+                        },
+                        plugins: {
+                            legend: {
+                                display: true,
+                                position: 'top'
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        if (context.datasetIndex === 0) {
+                                            return context.dataset.label + ': CHF ' + context.parsed.y.toFixed(2);
+                                        } else {
+                                            return context.dataset.label + ': ' + context.parsed.y.toLocaleString('de-CH');
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        scales: {
+                            y: {
+                                type: 'linear',
+                                display: true,
+                                position: 'left',
+                                title: {
+                                    display: true,
+                                    text: 'Auszahlung (CHF)'
+                                },
+                                ticks: {
+                                    callback: function(value) {
+                                        return 'CHF ' + value.toFixed(0);
+                                    }
+                                }
+                            },
+                            y1: {
+                                type: 'linear',
+                                display: true,
+                                position: 'right',
+                                title: {
+                                    display: true,
+                                    text: 'Anzahl Bons'
+                                },
+                                grid: {
+                                    drawOnChartArea: false,
+                                }
+                            }
+                        }
+                    }
+                });
+                
+                // Scroll to chart
+                document.getElementById('clubChartSection').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            } catch (error) {
+                console.error('Error loading club predictions:', error);
+            }
+        }
+        
         // Render clubs
         function renderClubs(clubs) {
             const container = document.getElementById('clubsContainer');
@@ -294,7 +541,7 @@ HTML_TEMPLATE = """
             }
             
             container.innerHTML = clubs.map(club => `
-                <div class="club-card">
+                <div class="club-card" data-club-id="${club.publicId}" data-club-name="${escapeHtml(club.name)}" style="cursor: pointer; transition: transform 0.2s;">
                     <div class="club-name">${escapeHtml(club.name)}</div>
                     <div class="club-stats">
                         <div class="stat-item">
@@ -320,6 +567,25 @@ HTML_TEMPLATE = """
                     </div>
                 </div>
             `).join('');
+            
+            // Add click handlers for predictions
+            container.querySelectorAll('.club-card').forEach(card => {
+                card.addEventListener('click', function() {
+                    const clubId = this.dataset.clubId;
+                    const clubName = this.dataset.clubName;
+                    loadClubPredictions(clubId, clubName);
+                });
+                
+                // Add hover effect
+                card.addEventListener('mouseenter', function() {
+                    this.style.transform = 'translateY(-2px)';
+                    this.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.15)';
+                });
+                card.addEventListener('mouseleave', function() {
+                    this.style.transform = 'translateY(0)';
+                    this.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.1)';
+                });
+            });
         }
         
         // Escape HTML to prevent XSS
@@ -408,8 +674,9 @@ HTML_TEMPLATE = """
             // Set up search input listener
             document.getElementById('searchInput').addEventListener('input', handleSearch);
             
-            // Load data
+            // Load data and predictions
             loadData();
+            loadWorthTimeline();
         });
     </script>
 </body>
@@ -427,6 +694,66 @@ def index():
 def serve_data(filename):
     """Serve data files"""
     return send_from_directory(DATA_DIR, filename)
+
+
+@app.route('/api/predictions/worth-timeline')
+def get_worth_timeline():
+    """Get voucher worth timeline predictions"""
+    try:
+        if not WORTH_TIMELINE_FILE.exists():
+            return jsonify({"error": "Predictions not yet available"}), 404
+        
+        timeline = []
+        with open(WORTH_TIMELINE_FILE, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                timeline.append({
+                    "timestamp": row["ds"],
+                    "worth": float(row["predicted_worth"]),
+                    "vouchers": int(float(row["predicted_vouchers"]))
+                })
+        
+        return jsonify(timeline)
+    except Exception as e:
+        logger.error(f"Error loading worth timeline: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/predictions/club/<club_id>')
+def get_club_predictions(club_id):
+    """Get predictions for a specific club"""
+    try:
+        if not PREDICTIONS_FILE.exists():
+            return jsonify({"error": "Predictions not yet available"}), 404
+        
+        with open(PREDICTIONS_FILE, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row["publicId"] == club_id:
+                    # Extract snapshot predictions
+                    snapshots = []
+                    for key, value in row.items():
+                        if key.startswith("payout_by_"):
+                            date = key.replace("payout_by_", "")
+                            vouchers_key = f"vouchers_by_{date}"
+                            snapshots.append({
+                                "date": date,
+                                "payout": float(value),
+                                "vouchers": int(row[vouchers_key])
+                            })
+                    
+                    return jsonify({
+                        "publicId": row["publicId"],
+                        "name": row["name"],
+                        "current_vouchers": int(row["current_vouchers"]),
+                        "current_payout": float(row["current_payout"]),
+                        "snapshots": snapshots
+                    })
+        
+        return jsonify({"error": "Club not found"}), 404
+    except Exception as e:
+        logger.error(f"Error loading club predictions: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == '__main__':
