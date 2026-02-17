@@ -249,7 +249,12 @@ HTML_TEMPLATE = """
         <!-- Charts Section -->
         <div class="charts-section" style="background: white; padding: 20px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);">
             <h2 style="margin-bottom: 10px; font-size: 1.3em;">📈 Bon-Wert & Bon-Anzahl Historie & Prognose</h2>
-            <p style="margin-bottom: 20px; color: #666; font-size: 0.9em;">Durchgezogene Linien = Historische Daten | Gestrichelte Linien = Prognosen</p>
+            <p style="margin-bottom: 20px; color: #666; font-size: 0.9em;">
+                <span style="color: #ff6b00;">●</span> Historischer Bon-Wert | 
+                <span style="color: #cc0000;">●</span> Prognostizierter Bon-Wert | 
+                <span style="color: #0066cc;">●</span> Historische Bons | 
+                <span style="color: #00cc66;">●</span> Prognostizierte Bons
+            </p>
             <div style="height: 350px; position: relative;">
                 <canvas id="worthChart"></canvas>
             </div>
@@ -375,6 +380,16 @@ HTML_TEMPLATE = """
                     worthChart.destroy();
                 }
                 
+                // Find current time index
+                const now = new Date();
+                let currentTimeIndex = -1;
+                for (let i = 0; i < sortedTimestamps.length; i++) {
+                    if (new Date(sortedTimestamps[i]) > now) {
+                        currentTimeIndex = i;
+                        break;
+                    }
+                }
+                
                 worthChart = new Chart(ctx, {
                     type: 'line',
                     data: {
@@ -384,54 +399,52 @@ HTML_TEMPLATE = """
                                 label: 'Historischer Bon-Wert (CHF)',
                                 data: historicalWorth,
                                 borderColor: '#ff6b00',
-                                backgroundColor: 'rgba(255, 107, 0, 0.2)',
+                                backgroundColor: 'rgba(255, 107, 0, 0.1)',
                                 yAxisID: 'y',
                                 tension: 0.1,
                                 fill: false,
-                                pointRadius: 3,
+                                pointRadius: 2,
                                 pointHoverRadius: 6,
-                                borderWidth: 2,
+                                borderWidth: 2.5,
                                 spanGaps: false
                             },
                             {
                                 label: 'Prognostizierter Bon-Wert (CHF)',
                                 data: predictedWorth,
-                                borderColor: '#ff6b00',
-                                backgroundColor: 'rgba(255, 107, 0, 0.1)',
+                                borderColor: '#cc0000',
+                                backgroundColor: 'rgba(204, 0, 0, 0.1)',
                                 yAxisID: 'y',
                                 tension: 0.4,
-                                fill: true,
+                                fill: false,
                                 pointRadius: 2,
                                 pointHoverRadius: 6,
-                                borderWidth: 2,
-                                borderDash: [5, 5],
+                                borderWidth: 2.5,
                                 spanGaps: false
                             },
                             {
                                 label: 'Historische Bons (Total)',
                                 data: historicalVouchers,
                                 borderColor: '#0066cc',
-                                backgroundColor: 'rgba(0, 102, 204, 0.2)',
+                                backgroundColor: 'rgba(0, 102, 204, 0.1)',
                                 yAxisID: 'y1',
                                 tension: 0.1,
                                 fill: false,
-                                pointRadius: 3,
+                                pointRadius: 2,
                                 pointHoverRadius: 6,
-                                borderWidth: 2,
+                                borderWidth: 2.5,
                                 spanGaps: false
                             },
                             {
                                 label: 'Prognostizierte Bons (Total)',
                                 data: predictedVouchers,
-                                borderColor: '#0066cc',
-                                backgroundColor: 'rgba(0, 102, 204, 0.1)',
+                                borderColor: '#00cc66',
+                                backgroundColor: 'rgba(0, 204, 102, 0.1)',
                                 yAxisID: 'y1',
                                 tension: 0.4,
-                                fill: true,
+                                fill: false,
                                 pointRadius: 2,
                                 pointHoverRadius: 6,
-                                borderWidth: 2,
-                                borderDash: [5, 5],
+                                borderWidth: 2.5,
                                 spanGaps: false
                             }
                         ]
@@ -499,25 +512,110 @@ HTML_TEMPLATE = """
                                 }
                             }
                         }
-                    }
+                    },
+                    plugins: [{
+                        id: 'currentTimeLine',
+                        afterDatasetsDraw: function(chart) {
+                            if (currentTimeIndex >= 0) {
+                                const ctx = chart.ctx;
+                                const xAxis = chart.scales.x;
+                                const yAxis = chart.scales.y;
+                                const x = xAxis.getPixelForValue(currentTimeIndex);
+                                
+                                ctx.save();
+                                ctx.beginPath();
+                                ctx.moveTo(x, yAxis.top);
+                                ctx.lineTo(x, yAxis.bottom);
+                                ctx.lineWidth = 2;
+                                ctx.strokeStyle = 'rgba(255, 0, 0, 0.6)';
+                                ctx.setLineDash([5, 5]);
+                                ctx.stroke();
+                                
+                                // Add label
+                                ctx.font = 'bold 12px sans-serif';
+                                ctx.fillStyle = 'rgba(255, 0, 0, 0.8)';
+                                ctx.textAlign = 'center';
+                                ctx.fillText('Jetzt', x, yAxis.top - 5);
+                                ctx.restore();
+                            }
+                        }
+                    }]
                 });
             } catch (error) {
                 console.error('Error loading worth timeline:', error);
             }
         }
 
-        // Load club predictions chart
+        // Load club predictions chart (with historical data)
         async function loadClubPredictions(clubId, clubName) {
             try {
-                const response = await fetch(`/api/predictions/club/${clubId}`);
-                if (!response.ok) {
-                    console.log('Club predictions not available');
-                    return;
+                // Fetch both historical and prediction data
+                const [historicalResponse, predictionsResponse] = await Promise.all([
+                    fetch(`/api/historical/club/${clubId}`),
+                    fetch(`/api/predictions/club/${clubId}`)
+                ]);
+                
+                let historicalData = [];
+                let predictionsData = [];
+                
+                if (historicalResponse.ok) {
+                    historicalData = await historicalResponse.json();
                 }
                 
-                const data = await response.json();
+                if (predictionsResponse.ok) {
+                    const predData = await predictionsResponse.json();
+                    predictionsData = predData.snapshots || [];
+                }
                 
-                document.getElementById('clubChartTitle').textContent = `📊 Prognose für ${clubName}`;
+                // Combine timestamps
+                const allTimestamps = new Set([
+                    ...historicalData.map(d => d.timestamp),
+                    ...predictionsData.map(d => d.date)
+                ]);
+                const sortedTimestamps = Array.from(allTimestamps).sort();
+                
+                // Create lookup maps
+                const historicalMap = new Map(historicalData.map(d => [d.timestamp, d]));
+                const predictionsMap = new Map(predictionsData.map(d => [d.date, d]));
+                
+                // Prepare data arrays
+                const historicalPayout = [];
+                const predictedPayout = [];
+                const historicalVouchers = [];
+                const predictedVouchers = [];
+                
+                sortedTimestamps.forEach(ts => {
+                    const historical = historicalMap.get(ts);
+                    const prediction = predictionsMap.get(ts);
+                    
+                    if (historical) {
+                        historicalPayout.push(historical.payout);
+                        historicalVouchers.push(historical.vouchers);
+                        predictedPayout.push(null);
+                        predictedVouchers.push(null);
+                    } else if (prediction) {
+                        historicalPayout.push(null);
+                        historicalVouchers.push(null);
+                        predictedPayout.push(prediction.payout);
+                        predictedVouchers.push(prediction.vouchers);
+                    }
+                });
+                
+                const labels = sortedTimestamps.map(ts => 
+                    new Date(ts).toLocaleDateString('de-CH', {day: '2-digit', month: '2-digit'})
+                );
+                
+                // Find current time index
+                const now = new Date();
+                let currentTimeIndex = -1;
+                for (let i = 0; i < sortedTimestamps.length; i++) {
+                    if (new Date(sortedTimestamps[i]) > now) {
+                        currentTimeIndex = i;
+                        break;
+                    }
+                }
+                
+                document.getElementById('clubChartTitle').textContent = `📊 Historie & Prognose für ${clubName}`;
                 document.getElementById('clubChartSection').style.display = 'block';
                 
                 const ctx = document.getElementById('clubChart').getContext('2d');
@@ -529,29 +627,59 @@ HTML_TEMPLATE = """
                 clubChart = new Chart(ctx, {
                     type: 'line',
                     data: {
-                        labels: data.snapshots.map(s => new Date(s.date).toLocaleDateString('de-CH', {day: '2-digit', month: '2-digit'})),
+                        labels: labels,
                         datasets: [
                             {
-                                label: 'Prognostizierte Auszahlung (CHF)',
-                                data: data.snapshots.map(s => s.payout),
+                                label: 'Historische Auszahlung (CHF)',
+                                data: historicalPayout,
                                 borderColor: '#ff6b00',
                                 backgroundColor: 'rgba(255, 107, 0, 0.1)',
                                 yAxisID: 'y',
-                                tension: 0.4,
-                                fill: true,
-                                pointRadius: 3,
-                                pointHoverRadius: 7
+                                tension: 0.1,
+                                fill: false,
+                                pointRadius: 2,
+                                pointHoverRadius: 6,
+                                borderWidth: 2.5,
+                                spanGaps: false
                             },
                             {
-                                label: 'Prognostizierte Bons',
-                                data: data.snapshots.map(s => s.vouchers),
+                                label: 'Prognostizierte Auszahlung (CHF)',
+                                data: predictedPayout,
+                                borderColor: '#cc0000',
+                                backgroundColor: 'rgba(204, 0, 0, 0.1)',
+                                yAxisID: 'y',
+                                tension: 0.4,
+                                fill: false,
+                                pointRadius: 2,
+                                pointHoverRadius: 6,
+                                borderWidth: 2.5,
+                                spanGaps: false
+                            },
+                            {
+                                label: 'Historische Bons',
+                                data: historicalVouchers,
                                 borderColor: '#0066cc',
                                 backgroundColor: 'rgba(0, 102, 204, 0.1)',
                                 yAxisID: 'y1',
+                                tension: 0.1,
+                                fill: false,
+                                pointRadius: 2,
+                                pointHoverRadius: 6,
+                                borderWidth: 2.5,
+                                spanGaps: false
+                            },
+                            {
+                                label: 'Prognostizierte Bons',
+                                data: predictedVouchers,
+                                borderColor: '#00cc66',
+                                backgroundColor: 'rgba(0, 204, 102, 0.1)',
+                                yAxisID: 'y1',
                                 tension: 0.4,
-                                fill: true,
-                                pointRadius: 3,
-                                pointHoverRadius: 7
+                                fill: false,
+                                pointRadius: 2,
+                                pointHoverRadius: 6,
+                                borderWidth: 2.5,
+                                spanGaps: false
                             }
                         ]
                     },
@@ -565,12 +693,17 @@ HTML_TEMPLATE = """
                         plugins: {
                             legend: {
                                 display: true,
-                                position: 'top'
+                                position: 'top',
+                                labels: {
+                                    usePointStyle: true,
+                                    padding: 15
+                                }
                             },
                             tooltip: {
                                 callbacks: {
                                     label: function(context) {
-                                        if (context.datasetIndex === 0) {
+                                        if (context.parsed.y === null) return null;
+                                        if (context.datasetIndex === 0 || context.datasetIndex === 1) {
                                             return context.dataset.label + ': CHF ' + context.parsed.y.toFixed(2);
                                         } else {
                                             return context.dataset.label + ': ' + context.parsed.y.toLocaleString('de-CH');
@@ -607,7 +740,34 @@ HTML_TEMPLATE = """
                                 }
                             }
                         }
-                    }
+                    },
+                    plugins: [{
+                        id: 'currentTimeLine',
+                        afterDatasetsDraw: function(chart) {
+                            if (currentTimeIndex >= 0) {
+                                const ctx = chart.ctx;
+                                const xAxis = chart.scales.x;
+                                const yAxis = chart.scales.y;
+                                const x = xAxis.getPixelForValue(currentTimeIndex);
+                                
+                                ctx.save();
+                                ctx.beginPath();
+                                ctx.moveTo(x, yAxis.top);
+                                ctx.lineTo(x, yAxis.bottom);
+                                ctx.lineWidth = 2;
+                                ctx.strokeStyle = 'rgba(255, 0, 0, 0.6)';
+                                ctx.setLineDash([5, 5]);
+                                ctx.stroke();
+                                
+                                // Add label
+                                ctx.font = 'bold 12px sans-serif';
+                                ctx.fillStyle = 'rgba(255, 0, 0, 0.8)';
+                                ctx.textAlign = 'center';
+                                ctx.fillText('Jetzt', x, yAxis.top - 5);
+                                ctx.restore();
+                            }
+                        }
+                    }]
                 });
                 
                 // Scroll to chart
@@ -826,6 +986,37 @@ def get_worth_timeline():
         return jsonify(timeline)
     except Exception as e:
         logger.error(f"Error loading worth timeline: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/historical/club/<club_id>')
+def get_club_historical(club_id):
+    """Get historical data for a specific club"""
+    try:
+        history = []
+        stats_files = sorted(DATA_DIR.glob("stats_*.json"))
+        
+        for stats_file in stats_files:
+            with open(stats_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                metadata = data.get('metadata', {})
+                timestamp = metadata.get('timestamp')
+                voucher_worth = metadata.get('voucherWorth', 0)
+                
+                if timestamp and voucher_worth:
+                    # Find the club in this snapshot
+                    for club in data.get('clubs', []):
+                        if club.get('publicId') == club_id:
+                            history.append({
+                                "timestamp": timestamp,
+                                "vouchers": club.get('voucherCount', 0),
+                                "payout": club.get('voucherCount', 0) * voucher_worth
+                            })
+                            break
+        
+        return jsonify(history)
+    except Exception as e:
+        logger.error(f"Error loading club historical data: {e}")
         return jsonify({"error": str(e)}), 500
 
 
