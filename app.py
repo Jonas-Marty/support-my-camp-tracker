@@ -248,7 +248,8 @@ HTML_TEMPLATE = """
         
         <!-- Charts Section -->
         <div class="charts-section" style="background: white; padding: 20px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);">
-            <h2 style="margin-bottom: 20px; font-size: 1.3em;">📈 Bon-Wert & Bon-Anzahl Prognose</h2>
+            <h2 style="margin-bottom: 10px; font-size: 1.3em;">📈 Bon-Wert & Bon-Anzahl Historie & Prognose</h2>
+            <p style="margin-bottom: 20px; color: #666; font-size: 0.9em;">Durchgezogene Linien = Historische Daten | Gestrichelte Linien = Prognosen</p>
             <div style="height: 350px; position: relative;">
                 <canvas id="worthChart"></canvas>
             </div>
@@ -310,16 +311,64 @@ HTML_TEMPLATE = """
             });
         }
         
-        // Load voucher worth timeline chart
+        // Load voucher worth timeline chart (historical + predictions)
         async function loadWorthTimeline() {
             try {
-                const response = await fetch('/api/predictions/worth-timeline');
-                if (!response.ok) {
-                    console.log('Predictions not yet available');
-                    return;
+                // Fetch both historical and prediction data
+                const [historicalResponse, predictionsResponse] = await Promise.all([
+                    fetch('/api/historical/worth-timeline'),
+                    fetch('/api/predictions/worth-timeline')
+                ]);
+                
+                let historicalData = [];
+                let predictionsData = [];
+                
+                if (historicalResponse.ok) {
+                    historicalData = await historicalResponse.json();
                 }
                 
-                const data = await response.json();
+                if (predictionsResponse.ok) {
+                    predictionsData = await predictionsResponse.json();
+                }
+                
+                // Combine and sort all timestamps
+                const allTimestamps = new Set([
+                    ...historicalData.map(d => d.timestamp),
+                    ...predictionsData.map(d => d.timestamp)
+                ]);
+                const sortedTimestamps = Array.from(allTimestamps).sort();
+                
+                // Create lookup maps
+                const historicalMap = new Map(historicalData.map(d => [d.timestamp, d]));
+                const predictionsMap = new Map(predictionsData.map(d => [d.timestamp, d]));
+                
+                // Prepare data arrays
+                const historicalWorth = [];
+                const predictedWorth = [];
+                const historicalVouchers = [];
+                const predictedVouchers = [];
+                
+                sortedTimestamps.forEach(ts => {
+                    const historical = historicalMap.get(ts);
+                    const prediction = predictionsMap.get(ts);
+                    
+                    if (historical) {
+                        historicalWorth.push(historical.worth);
+                        historicalVouchers.push(historical.vouchers);
+                        predictedWorth.push(null);
+                        predictedVouchers.push(null);
+                    } else if (prediction) {
+                        historicalWorth.push(null);
+                        historicalVouchers.push(null);
+                        predictedWorth.push(prediction.worth);
+                        predictedVouchers.push(prediction.vouchers);
+                    }
+                });
+                
+                const labels = sortedTimestamps.map(ts => 
+                    new Date(ts).toLocaleDateString('de-CH', {day: '2-digit', month: '2-digit', hour: '2-digit'})
+                );
+                
                 const ctx = document.getElementById('worthChart').getContext('2d');
                 
                 if (worthChart) {
@@ -329,29 +378,61 @@ HTML_TEMPLATE = """
                 worthChart = new Chart(ctx, {
                     type: 'line',
                     data: {
-                        labels: data.map(d => new Date(d.timestamp).toLocaleDateString('de-CH', {day: '2-digit', month: '2-digit'})),
+                        labels: labels,
                         datasets: [
                             {
-                                label: 'Bon-Wert (CHF)',
-                                data: data.map(d => d.worth),
+                                label: 'Historischer Bon-Wert (CHF)',
+                                data: historicalWorth,
+                                borderColor: '#ff6b00',
+                                backgroundColor: 'rgba(255, 107, 0, 0.2)',
+                                yAxisID: 'y',
+                                tension: 0.1,
+                                fill: false,
+                                pointRadius: 3,
+                                pointHoverRadius: 6,
+                                borderWidth: 2,
+                                spanGaps: false
+                            },
+                            {
+                                label: 'Prognostizierter Bon-Wert (CHF)',
+                                data: predictedWorth,
                                 borderColor: '#ff6b00',
                                 backgroundColor: 'rgba(255, 107, 0, 0.1)',
                                 yAxisID: 'y',
                                 tension: 0.4,
                                 fill: true,
                                 pointRadius: 2,
-                                pointHoverRadius: 6
+                                pointHoverRadius: 6,
+                                borderWidth: 2,
+                                borderDash: [5, 5],
+                                spanGaps: false
+                            },
+                            {
+                                label: 'Historische Bons (Total)',
+                                data: historicalVouchers,
+                                borderColor: '#0066cc',
+                                backgroundColor: 'rgba(0, 102, 204, 0.2)',
+                                yAxisID: 'y1',
+                                tension: 0.1,
+                                fill: false,
+                                pointRadius: 3,
+                                pointHoverRadius: 6,
+                                borderWidth: 2,
+                                spanGaps: false
                             },
                             {
                                 label: 'Prognostizierte Bons (Total)',
-                                data: data.map(d => d.vouchers),
+                                data: predictedVouchers,
                                 borderColor: '#0066cc',
                                 backgroundColor: 'rgba(0, 102, 204, 0.1)',
                                 yAxisID: 'y1',
                                 tension: 0.4,
                                 fill: true,
                                 pointRadius: 2,
-                                pointHoverRadius: 6
+                                pointHoverRadius: 6,
+                                borderWidth: 2,
+                                borderDash: [5, 5],
+                                spanGaps: false
                             }
                         ]
                     },
@@ -365,12 +446,17 @@ HTML_TEMPLATE = """
                         plugins: {
                             legend: {
                                 display: true,
-                                position: 'top'
+                                position: 'top',
+                                labels: {
+                                    usePointStyle: true,
+                                    padding: 15
+                                }
                             },
                             tooltip: {
                                 callbacks: {
                                     label: function(context) {
-                                        if (context.datasetIndex === 0) {
+                                        if (context.parsed.y === null) return null;
+                                        if (context.datasetIndex === 0 || context.datasetIndex === 1) {
                                             return context.dataset.label + ': CHF ' + context.parsed.y.toFixed(2);
                                         } else {
                                             return context.dataset.label + ': ' + context.parsed.y.toLocaleString('de-CH');
@@ -694,6 +780,30 @@ def index():
 def serve_data(filename):
     """Serve data files"""
     return send_from_directory(DATA_DIR, filename)
+
+
+@app.route('/api/historical/worth-timeline')
+def get_historical_timeline():
+    """Get historical voucher worth timeline"""
+    try:
+        timeline = []
+        stats_files = sorted(DATA_DIR.glob("stats_*.json"))
+        
+        for stats_file in stats_files:
+            with open(stats_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                metadata = data.get('metadata', {})
+                if 'timestamp' in metadata and 'voucherWorth' in metadata and 'totalVouchers' in metadata:
+                    timeline.append({
+                        "timestamp": metadata["timestamp"],
+                        "worth": metadata["voucherWorth"],
+                        "vouchers": metadata["totalVouchers"]
+                    })
+        
+        return jsonify(timeline)
+    except Exception as e:
+        logger.error(f"Error loading historical timeline: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/api/predictions/worth-timeline')
